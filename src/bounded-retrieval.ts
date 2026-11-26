@@ -13,6 +13,12 @@ export const DEFAULT_BOUNDED_RETRIEVAL_TOKEN_CAP = 2500;
 export const DEFAULT_MAX_RETRIEVAL_CHUNK_TOKENS = 500;
 export const DEFAULT_RETRIEVAL_RANKING_VERSION = "lexical-v1";
 export const DEFAULT_RETRIEVAL_SEARCH_MODE = "lexical";
+/** Context reserve before retrieval may be injected (matches Pi compaction headroom). */
+export const DEFAULT_CONTEXT_RESERVE_TOKENS = 16_384;
+/** Extra conservative margin before retrieval may be injected. */
+export const DEFAULT_CONTEXT_SAFETY_MARGIN_TOKENS = 1024;
+/** Output reserve so retrieval does not crowd the model's output budget. */
+export const DEFAULT_CONTEXT_OUTPUT_RESERVE_TOKENS = 4096;
 
 export interface Tokenizer {
   countTokens(text: string): number | Promise<number>;
@@ -25,6 +31,10 @@ export interface BoundedRetrievalDecision {
   reason?: "no_safe_result" | "over_cap" | "tokenizer_error";
   chunks?: RetrievalChunk[];
   tracking?: RetrievalTrackingEvent;
+  contextWindow?: number;
+  currentContextTokens?: number;
+  contextBudgetTokens?: number;
+  effectiveTokenCap?: number;
 }
 
 export interface RetrievalCandidate {
@@ -62,6 +72,10 @@ export interface RetrievalTrackingEvent {
   }>;
   rankingVersion: string;
   searchMode: string;
+  contextWindow?: number;
+  currentContextTokens?: number;
+  contextBudgetTokens?: number;
+  effectiveTokenCap?: number;
 }
 
 export interface ServingTokenizerOptions {
@@ -295,6 +309,11 @@ export interface SelectBoundedRetrievalOptions {
   rankingVersion?: string;
   searchMode?: string;
   correlationId?: string;
+  contextWindow?: number;
+  currentContextTokens?: number;
+  contextReserveTokens?: number;
+  contextSafetyMarginTokens?: number;
+  contextMaxTokens?: number;
 }
 
 export async function selectBoundedRetrieval(
