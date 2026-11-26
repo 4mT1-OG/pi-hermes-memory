@@ -7,6 +7,7 @@ import { DatabaseManager } from '../../src/store/db.js';
 import { addMemory, getMemoryUsageSignals } from '../../src/store/sqlite-memory-store.js';
 import { normalizeMemoryLookupText } from '../../src/store/memory-lookup.js';
 import { registerMemorySearchTool } from '../../src/tools/memory-search-tool.js';
+import { type Tokenizer } from '../../src/bounded-retrieval.js';
 
 let ROOT_DIR = '';
 
@@ -177,6 +178,53 @@ describe('registerMemorySearchTool', () => {
     assert.match(result.content[0].text, /resilient entry/);
     // The hit did NOT land (recording failed) but the search succeeded.
     assert.strictEqual(getMemoryUsageSignals(dbManager, { target: 'memory', project: null }).size, 0);
+
+    dbManager.close();
+  });
+
+  it('fails closed and reports the reason when the serving tokenizer errors', async () => {
+    const dbManager = makeDbManager();
+    addMemory(dbManager, 'auth rotation policy failure lesson', 'memory');
+
+    let captured: any;
+    const failingTokenizer: Tokenizer = { countTokens: async () => { throw new Error('tokenizer service down'); } };
+    registerMemorySearchTool({ registerTool: (def: any) => { captured = def; } } as any, dbManager, { servingTokenizer: failingTokenizer });
+
+    const result = await captured.execute('tc-1', { query: 'auth rotation policy failure' });
+    assert.strictEqual(result.details.retrieval?.injected, false);
+    assert.strictEqual(result.details.retrieval?.reason, 'tokenizer_error');
+    assert.match(result.content[0].text, /No safe memory context could be injected/);
+
+    dbManager.close();
+  });
+
+  it('injects nothing when the final assembled retrieval prompt exceeds the token cap', async () => {
+    const dbManager = makeDbManager();
+    addMemory(dbManager, 'retrieval payload alpha beta gamma delta epsilon zeta', 'memory');
+
+    let captured: any;
+    const charTokenizer: Tokenizer = { countTokens: async (text: string) => text.length };
+    registerMemorySearchTool({ registerTool: (def: any) => { captured = def; } } as any, dbManager, { servingTokenizer: charTokenizer, retrievalTokenCap: 8 });
+
+    const result = await captured.execute('tc-1', { query: 'retrieval payload alpha' });
+    assert.strictEqual(result.details.retrieval?.injected, false);
+    assert.doesNotMatch(result.content[0].text, /retrieval-context/);
+
+    dbManager.close();
+  });
+
+  it('injects the bounded retrieval context when the final prompt is within the cap', async () => {
+    const dbManager = makeDbManager();
+    addMemory(dbManager, 'recallable volcano note', 'memory');
+
+    let captured: any;
+    const charTokenizer: Tokenizer = { countTokens: async (text: string) => text.length };
+    registerMemorySearchTool({ registerTool: (def: any) => { captured = def; } } as any, dbManager, { servingTokenizer: charTokenizer });
+
+    const result = await captured.execute('tc-1', { query: 'recallable' });
+    assert.strictEqual(result.details.retrieval?.injected, true);
+    assert.match(result.content[0].text, /retrieval-context/);
+    assert.match(result.content[0].text, /recallable volcano note/);
 
     dbManager.close();
   });

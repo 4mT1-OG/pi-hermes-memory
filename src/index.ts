@@ -58,6 +58,7 @@ import { shouldWarnAutoConsolidationFailure } from "./auto-consolidation-warning
 import { detectProject, detectProjectSkills } from "./project.js";
 import { buildPromptContext } from "./prompt-context.js";
 import { migrateLegacyProjectMemoryDirs } from "./project-memory-migration.js";
+import { buildServingTokenizer, DEFAULT_BOUNDED_RETRIEVAL_TOKEN_CAP } from "./bounded-retrieval.js";
 import { AGENT_ROOT } from "./paths.js";
 import { isDatabaseMigrationPending } from "./extension-root-migration.js";
 import { measureLifecycle, measureLifecycleSync } from "./lifecycle-timing.js";
@@ -420,7 +421,11 @@ export default function (pi: ExtensionAPI) {
   // ── 11. SQLite session search + extended memory ──
   registerSessionSearchTool(config.sessionSearch?.variant === "anchors" ? pi : memoryPi,
     dbManager, config.sessionSearch ?? { variant: "legacy" });
-  registerMemorySearchTool(memoryPi, dbManager, { usageTrackingEnabled: config.usageHitTrackingEnabled });
+  registerMemorySearchTool(memoryPi, dbManager, {
+    usageTrackingEnabled: config.usageHitTrackingEnabled,
+    servingTokenizer: buildServingTokenizer(),
+    retrievalTokenCap: DEFAULT_BOUNDED_RETRIEVAL_TOKEN_CAP,
+  });
   registerIndexSessionsCommand(memoryPi, config);
 
   // ── 12. Auto-index session on shutdown ──

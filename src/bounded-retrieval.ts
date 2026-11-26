@@ -65,10 +65,14 @@ export interface RetrievalTrackingEvent {
 }
 
 export interface ServingTokenizerOptions {
-  baseUrl: string;
-  modelId: string;
+  baseUrl?: string;
+  modelId?: string;
   fetchImpl?: typeof fetch;
 }
+
+/** Local llama.cpp server used for serving-model token counting. */
+export const DEFAULT_SERVING_TOKENIZER_BASE_URL = process.env.PI_LLAMA_SERVER_BASE_URL ?? "http://127.0.0.1:9931";
+export const DEFAULT_SERVING_TOKENIZER_MODEL_ID = process.env.PI_LLAMA_SERVER_MODEL_ID ?? "Ornith-1.5-9B-Q4_K_M";
 
 function defaultTokenizer(text: string): number {
   const trimmed = text.trim();
@@ -99,11 +103,13 @@ export async function countFinalPromptTokens(prompt: string, tokenizer?: Tokeniz
 }
 
 export function createNoSafeResult(reason: string): BoundedRetrievalDecision {
+  const normalized: BoundedRetrievalDecision["reason"] =
+    reason === "over_cap" || reason === "tokenizer_error" ? reason : "no_safe_result";
   return {
     injected: false,
     prompt: "",
     tokenCount: 0,
-    reason: reason === "over_cap" ? "over_cap" : "no_safe_result",
+    reason: normalized,
   };
 }
 
@@ -112,16 +118,19 @@ export function createNoSafeResult(reason: string): BoundedRetrievalDecision {
  * `/tokenize` endpoint. The final prompt counter uses this bound tokenizer
  * rather than the character-based scaffold default.
  */
-export async function createServingTokenizer(options: ServingTokenizerOptions): Promise<Tokenizer> {
+export function buildServingTokenizer(options: ServingTokenizerOptions = {}): Tokenizer {
+  const baseUrl = options.baseUrl ?? DEFAULT_SERVING_TOKENIZER_BASE_URL;
+  const modelId = options.modelId ?? DEFAULT_SERVING_TOKENIZER_MODEL_ID;
+  const fetchImpl = options.fetchImpl;
   const tokenizer: Tokenizer = {
     countTokens: async (text: string) => {
-      const response = await (options.fetchImpl ?? fetch)(
-        `${options.baseUrl.replace(/\/+$/u, "").replace(/\/v1$/u, "")}/tokenize`,
+      const response = await (fetchImpl ?? fetch)(
+        `${baseUrl.replace(/\/+$/u, "").replace(/\/v1$/u, "")}/tokenize`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            model: options.modelId,
+            model: modelId,
             content: text,
             add_special: false,
             parse_special: false,
@@ -137,6 +146,10 @@ export async function createServingTokenizer(options: ServingTokenizerOptions): 
     },
   };
   return tokenizer;
+}
+
+export async function createServingTokenizer(options?: ServingTokenizerOptions): Promise<Tokenizer> {
+  return buildServingTokenizer(options);
 }
 
 function markdownSections(content: string): Array<{ heading?: string; text: string }> {
@@ -225,7 +238,13 @@ async function rankRetrievalCandidates(
 ): Promise<RetrievalCandidate[]> {
   const scored = await Promise.all(
     candidates.map(async (candidate) => {
-      const contentTokens = await countTokens(candidate.content, tokenizer);
+      let contentTokens = 0;
+      try {
+        contentTokens = await countTokens(candidate.content, tokenizer);
+      } catch {
+        // Ranking degrades gracefully; the selection pass fails closed on tokenizer errors.
+        contentTokens = Number.NaN;
+      }
       const relevance = typeof candidate.score === "number" ? candidate.score : lexicalRelevanceScore(query, candidate.content);
       const freshness = freshnessRank(candidate);
       const created = candidate.created ? Date.parse(candidate.created) : Number.NaN;

@@ -6,12 +6,19 @@ import { searchMemories, getMemoryStats, recordSearchHits } from '../store/sqlit
 import type { MemoryCategory } from '../types.js';
 import { createSharedToolResultRenderer } from './shared-output-view.js';
 import { searchResultView } from './tool-result-views.js';
+import {
+  DEFAULT_BOUNDED_RETRIEVAL_TOKEN_CAP,
+  selectBoundedRetrieval,
+  type BoundedRetrievalDecision,
+  type Tokenizer,
+} from '../bounded-retrieval.js';
 
 interface SearchResult {
   success: boolean;
   count?: number;
   message?: string;
   output?: string;
+  retrieval?: BoundedRetrievalDecision;
 }
 
 function mutationTarget(entry: { target: "memory" | "user" | "failure"; project: string | null }): "memory" | "user" | "failure" | "project" {
@@ -27,7 +34,7 @@ function scopeLabel(project: string | null): string {
 export function registerMemorySearchTool(
   pi: ExtensionAPI,
   dbManager: DatabaseManager,
-  options: { usageTrackingEnabled?: boolean } = {},
+  options: { usageTrackingEnabled?: boolean; servingTokenizer?: Tokenizer; retrievalTokenCap?: number } = {},
 ): void {
   pi.registerTool({
     name: 'memory_search',
@@ -104,8 +111,29 @@ Returns matching memory entries with their mutation target, scope, and dates. Th
         output += `   Created: ${entry.created} | Last used: ${entry.lastReferenced}\n\n`;
       }
 
-      const finalResult: SearchResult = { success: true, count: results.length, output: output.trim() };
-      return { content: [{ type: 'text' as const, text: output.trim() }], details: finalResult };
+      const tokenCap = options.retrievalTokenCap ?? DEFAULT_BOUNDED_RETRIEVAL_TOKEN_CAP;
+      const decision = await selectBoundedRetrieval({
+        candidates: results.map((entry) => ({
+          id: String(entry.id),
+          content: entry.content,
+          created: entry.created,
+          lastReferenced: entry.lastReferenced,
+        })),
+        query,
+        tokenizer: options.servingTokenizer,
+        tokenCap,
+      });
+
+      let finalText = output.trim();
+      if (decision.injected && decision.prompt) {
+        finalText = `${finalText}\n\n${decision.prompt}`;
+      } else if (results.length > 0) {
+        // Fail closed: retrieved content must not reach the model un-bounded.
+        finalText = `No safe memory context could be injected for query "${query}" (reason: ${decision.reason ?? "no_safe_result"}).`;
+      }
+
+      const finalResult: SearchResult = { success: true, count: results.length, output: finalText, retrieval: decision };
+      return { content: [{ type: 'text' as const, text: finalText }], details: finalResult };
     },
   });
 }
