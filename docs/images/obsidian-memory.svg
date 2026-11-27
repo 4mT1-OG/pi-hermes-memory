@@ -40,7 +40,7 @@
   <!-- Obsidian vault -->
   <g>
     <rect x="620" y="110" width="530" height="390" rx="12" fill="#f5f3ff" stroke="#7c3aed" stroke-width="2.5"/>
-    <text x="885" y="150" text-anchor="middle" font-size="19" font-weight="bold" fill="#4c1d95">Obsidian vault — Hesa</text>
+    <text x="885" y="150" text-anchor="middle" font-size="19" font-weight="bold" fill="#4c1d95">Hesa vault — Markdown store</text>
     <text x="885" y="174" text-anchor="middle" font-size="12.5" fill="#6d28d9">~/Hesa/AgentMemory/.pi-memory</text>
     <line x1="650" y1="192" x2="1120" y2="192" stroke="#ddd6fe" stroke-width="1.5"/>
     <g font-size="13.5" fill="#374151">
